@@ -26,7 +26,8 @@ services:
       retries: 5
 
   valkey-exporter-1:
-    image: oliver006/redis_exporter:v1.67.0-alpine
+    image: oliver006/redis_exporter:v1.82.0-alpine
+
     command: ["--redis.addr", "valkey-1:6379"]
     cap_drop:
       - ALL
@@ -71,7 +72,8 @@ services:
         condition: service_healthy
 
   valkey-exporter-2:
-    image: oliver006/redis_exporter:v1.67.0-alpine
+    image: oliver006/redis_exporter:v1.82.0-alpine
+
     command: ["--redis.addr", "valkey-2:6379"]
     cap_drop:
       - ALL
@@ -116,7 +118,8 @@ services:
         condition: service_healthy
 
   valkey-exporter-3:
-    image: oliver006/redis_exporter:v1.67.0-alpine
+    image: oliver006/redis_exporter:v1.82.0-alpine
+
     command: ["--redis.addr", "valkey-3:6379"]
     cap_drop:
       - ALL

@@ -25,13 +25,6 @@ def docker_stack():
         print("Swarm not active. Initializing Swarm...")
         docker.swarm.init()
 
-    # Ensure edge-external network exists
-    try:
-        docker.network.inspect("edge-external")
-    except Exception:
-        print("Creating edge-external network...")
-        docker.network.create("edge-external", driver="overlay", attachable=True)
-
     print("Building images...")
     docker.compose.build(["valkey", "edge-router-api", "cert-manager", "cert-syncer", "traefik", "socket-proxy"])
 

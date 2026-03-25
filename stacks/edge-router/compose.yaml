@@ -66,7 +66,8 @@ services:
   # HAProxy - L4 TCP Load Balancer (Global Mode)
   # ===========================================
   haproxy:
-    image: tes4all/haproxy:${HAPROXY_VERSION:-3.3.4-alpine}
+    image: tes4all/haproxy:${HAPROXY_VERSION:-3.3.6-alpine}
+
 
     hostname: haproxy-{{.Task.Slot}}
     networks:
@@ -129,7 +130,8 @@ services:
   # Traefik - L7 HTTP Reverse Proxy
   # ===========================================
   traefik:
-    image: tes4all/traefik:${TRAEFIK_VERSION:-3.6.9}
+    image: tes4all/traefik:${TRAEFIK_VERSION:-3.6.11}
+
 
     hostname: traefik-{{.Task.Slot}}
     command:

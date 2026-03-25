@@ -81,7 +81,8 @@ services:
       - ALL
 
   login:
-    image: ghcr.io/zitadel/zitadel-login:v4.10.1
+    image: ghcr.io/zitadel/zitadel-login:v4.13.0
+
     user: "1000"
     deploy:
       mode: replicated

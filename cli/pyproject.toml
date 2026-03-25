@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tes-cli"
-version = "1.4.9"
+version = "1.4.10"
 description = "TES CLI - Tools"
 readme = "README.md"
 requires-python = ">=3.14"

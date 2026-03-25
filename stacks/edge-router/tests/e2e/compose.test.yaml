@@ -31,3 +31,6 @@ services:
 networks:
   edge-internal:
     internal: false
+  edge-external:
+    name: edge-external
+    external: false

@@ -1,4 +1,4 @@
-FROM ghcr.io/goauthentik/server:2025.2.4
+FROM ghcr.io/goauthentik/server:2026.2.1
 
 USER 0
 COPY config/authentik.yml /etc/authentik/config.yml

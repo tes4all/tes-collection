@@ -1,4 +1,4 @@
-FROM valkey/valkey:9-alpine
+FROM valkey/valkey:9.1-alpine
 
 # Create user 1000 if it doesn't exist
 RUN id -u 1000 &>/dev/null || adduser -D -u 1000 valkey-user

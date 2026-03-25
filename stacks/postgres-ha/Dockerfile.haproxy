@@ -1,4 +1,4 @@
-FROM haproxy:3.0.7-alpine
+FROM haproxy:3.3.6-alpine
 
 # Copy baked configuration into image (golden rule: never bind-mount config)
 COPY config/haproxy.cfg /usr/local/etc/haproxy/haproxy.cfg
