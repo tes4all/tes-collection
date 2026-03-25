@@ -1,0 +1,53 @@
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  Example: How to consume the Postgres HA Golden Stack from another project  ║
+# ║                                                                              ║
+# ║  This file shows how your application connects to the postgres-ha stack.     ║
+# ║  The golden compose.yaml is included as-is — you never modify it.            ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
+# ── Option A: Include locally (mono-repo or git submodule) ───────────────────
+#
+#   include:
+#     - path: ./stacks/postgres-ha/compose.yaml
+#
+# ── Option B: Include from remote Git repository ─────────────────────────────
+#
+#   include:
+#     - https://github.com/tes4all/tes.git#main:stacks/postgres-ha/compose.yaml
+#
+# ── Option C: Deploy postgres-ha separately and reference its network ────────
+#   (shown below — recommended for production Docker Swarm)
+#
+#   1. Deploy the golden stack:
+#      docker stack deploy -c stacks/postgres-ha/compose.yaml postgres-ha
+#
+#   2. Then deploy your app with this compose file:
+#      docker stack deploy -c compose.yaml my-app
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  my-app:
+    image: my-app:latest
+    networks:
+      - postgres-ha
+    environment:
+      # ── Read-Write connection (always reaches the current primary) ──
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@dbha:5000/mydb?sslmode=require
+      # ── Read-Only connection (load-balanced across replicas) ──
+      # - DATABASE_READONLY_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@dbha:5001/mydb?sslmode=require
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  postgres-ha:
+    external: true
+    # This matches the network name defined in the golden stack's compose.yaml.
+    # No prefix needed because the golden stack uses `name: postgres-ha`.

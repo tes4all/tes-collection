@@ -1,226 +1,129 @@
 # Postgres HA Golden Stack
 
-Production-ready PostgreSQL High Availability cluster using Patroni, etcd, and pgBackRest. This stack implements true HA with automatic failover, streaming replication, and automated backups.
+Production-ready PostgreSQL High Availability cluster using Patroni, etcd, HAProxy, and pgBackRest. This is a **Golden Stack** — deploy it as-is and connect your services via the shared Docker network. You never need to modify this compose file.
 
 ## Architecture
 
 ### Components
 
-- **PostgreSQL 16.1**: Primary database engine
-- **Patroni 3.2.0**: HA orchestration and automatic failover
-- **etcd 3.5.11**: Distributed consensus for cluster coordination (3-node cluster)
-- **pgBackRest**: Enterprise-grade backup and restore solution
-- **postgres_exporter**: Prometheus metrics exporter
+| Component | Version | Purpose |
+|-----------|---------|---------|
+| **PostgreSQL** | 18.1 | Primary database engine |
+| **Patroni** | 3.2.0 | HA orchestration and automatic failover |
+| **etcd** | 3.5.11 | Distributed consensus (3-node cluster) |
+| **HAProxy** | 3.0.7 (LTS) | Connection load balancer (primary + replicas) |
+| **pgBackRest** | latest | Enterprise-grade backup and restore |
+| **postgres_exporter** | 0.16.0 | Prometheus metrics for PostgreSQL |
 
 ### Topology
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    etcd Cluster (3 nodes)               │
-│  etcd-1:2379  │  etcd-2:2379  │  etcd-3:2379           │
-└─────────────────────────────────────────────────────────┘
-                          │
-          ┌───────────────┴───────────────┐
-          │                               │
-┌─────────▼─────────┐         ┌──────────▼────────┐
-│   Patroni Node 1  │         │  Patroni Node 2   │
-│   postgres-1:5432 │◄────────┤  postgres-2:5433  │
-│   (Primary/Leader)│ Repl.   │   (Replica)       │
-└───────────────────┘         └───────────────────┘
-          │                               │
-          │      ┌────────────────────────┘
-          │      │
-┌─────────▼──────▼─────┐
-│   Patroni Node 3     │
-│   postgres-3:5434    │
-│   (Replica)          │
-└──────────────────────┘
-          │
-┌─────────▼─────────┐
-│   pgBackRest      │
-│   (Backups)       │
-└───────────────────┘
+                        ┌──────────────────────────────────┐
+                        │      Your Application(s)         │
+                        │  (any service on postgres-ha net) │
+                        └──────────┬───────────────────────┘
+                                   │
+                    postgresql://dbha:5000  (write)
+                    postgresql://dbha:5001  (read)
+                                   │
+                  ┌────────────────▼────────────────┐
+                  │     HAProxy (2 replicas)        │
+                  │  :5000 → primary (read-write)   │
+                  │  :5001 → replicas (read-only)   │
+                  │  :8405 → prometheus metrics     │
+                  └────┬────────────┬───────────┬───┘
+                       │            │           │
+              ┌────────▼──┐  ┌─────▼─────┐  ┌──▼────────┐
+              │ postgres-1 │  │ postgres-2│  │ postgres-3│
+              │ (Patroni)  │  │ (Patroni) │  │ (Patroni) │
+              │  :5432     │  │  :5432    │  │  :5432    │
+              │  :8008 API │  │  :8008    │  │  :8008    │
+              └──────┬─────┘  └─────┬─────┘  └─────┬────┘
+                     │              │              │
+              ┌──────▼──────────────▼──────────────▼────┐
+              │         etcd Cluster (3 nodes)          │
+              │  etcd-1:2379 │ etcd-2:2379 │ etcd-3:2379│
+              └─────────────────────────────────────────┘
+                                   │
+              ┌────────────────────▼────────────────────┐
+              │   pgBackRest  (automated backups)       │
+              │   postgres-exporter (Prometheus)        │
+              └─────────────────────────────────────────┘
 ```
-
-## Features
-
-### Security (Following Golden Rules)
-
-- ✅ **Non-root execution**: All containers run as unprivileged users (UID 1000/1001)
-- ✅ **Baked configurations**: All configs copied into images at build time
-- ✅ **SSL/TLS encryption**: Postgres enforces SSL for all connections
-- ✅ **Version pinning**: No `:latest` tags used
-- ✅ **Capability dropping**: Minimal Linux capabilities (CAP_DROP: ALL)
-- ✅ **Self-signed certificates**: Included for development (use proper certs in production)
-
-### High Availability
-
-- **Automatic failover**: Patroni detects failures and promotes replicas
-- **Streaming replication**: Real-time data synchronization across nodes
-- **Split-brain protection**: etcd-based consensus prevents data corruption
-- **Health checks**: Built-in monitoring for all services
-- **Quorum-based**: 3-node etcd cluster ensures availability
-
-### Observability
-
-- **Prometheus labels**: All services tagged for automatic discovery
-- **Metrics endpoints**:
-  - Patroni: `http://localhost:8008/metrics`
-  - Postgres Exporter: `http://localhost:9187/metrics`
-  - etcd: Built-in metrics available
-- **Health checks**: HTTP-based health endpoints for monitoring
-- **Structured logging**: All components log to stdout/stderr
-
-### Backups
-
-- **Automated incremental backups**: pgBackRest runs hourly
-- **Point-in-time recovery (PITR)**: Full WAL archiving enabled
-- **Compression**: LZ4 compression for efficient storage
-- **Retention policies**: Configurable backup retention
 
 ## Quick Start
 
-### Prerequisites
-
-- Docker 20.10+
-- Docker Compose 2.0+
-- 4GB+ RAM available
-- 20GB+ disk space
-
-### Deploy the Stack
-
-#### Docker Compose (Development/Testing)
+### 1. Configure Environment
 
 ```bash
-# Navigate to the stack directory
 cd stacks/postgres-ha
 
-# Build images and start all services
+# Copy and edit the environment file
+cp .env.example .env
+
+# Edit passwords (REQUIRED for production!)
+vim .env
+```
+
+**`.env` variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NETWORK_DRIVER` | `overlay` | `bridge` for local Docker Compose, `overlay` for Swarm |
+| `POSTGRES_PASSWORD` | `postgres` | PostgreSQL superuser password |
+| `REPLICATOR_PASSWORD` | `replicator` | Streaming replication password |
+| `ADMIN_PASSWORD` | `admin` | Admin user password |
+
+### 2a. Local Development (Docker Compose)
+
+```bash
+# Set bridge networking for local use
+echo "NETWORK_DRIVER=bridge" > .env
+
+# Build and start
 docker compose build
 docker compose up -d
 
-# Wait for cluster initialization (takes 60-90 seconds)
-docker compose logs -f postgres-1
-
-# Check cluster status
-curl http://localhost:8008/cluster
-```
-
-#### Docker Swarm (Production)
-
-For production deployments with Docker Swarm:
-
-```bash
-# 1. Change network driver in compose.yaml from 'bridge' to 'overlay'
-sed -i 's/driver: bridge/driver: overlay/' compose.yaml
-
-# 2. Initialize swarm (if not already)
-docker swarm init
-
-# 3. Deploy as a stack
-docker stack deploy -c compose.yaml postgres-ha
-
-# 4. Check service status
-docker stack services postgres-ha
-```
-
-**Note**: The compose.yaml uses `bridge` driver by default for standalone Docker Compose. For Docker Swarm deployments, change to `overlay` driver for multi-host networking.
-
-### Verify Installation
-
-Run the automated verification script:
-
-```bash
+# Wait ~90 seconds for cluster initialization, then verify
 ./tests/verify.sh
 ```
 
-This script will:
-- Build Docker images for the stack
-- Start the entire stack
-- Wait for services to become healthy
-- Test database connectivity
-- Verify replication is working
-- Check metrics endpoints
-- Validate SSL configuration
-- Clean up after testing
-
-## Usage
-
-### Connect to Database
+### 2b. Production (Docker Swarm)
 
 ```bash
-# Connect to the primary node
-docker compose exec postgres-1 psql -U postgres
+# Initialize swarm (if not already)
+docker swarm init
 
-# Or from your host (if you have psql client)
-psql -h localhost -p 5432 -U postgres
+# Build images on all nodes (or push to a registry)
+docker compose build
+
+# Deploy as a stack (uses overlay networking by default)
+docker stack deploy -c compose.yaml postgres-ha
+
+# Check service status
+docker stack services postgres-ha
 ```
 
-**Default credentials** (⚠️ **CHANGE IN PRODUCTION!**):
-- Username: `postgres`
-- Password: `postgres`
-- Admin user: `admin` / `admin`
-- Replication user: `replicator` / `replicator`
+### 3. Connect Your Application
 
-### Monitor Cluster Status
+From any service on the same Docker Swarm / Compose network:
 
-```bash
-# Patroni REST API
-curl http://localhost:8008/cluster | jq
+```
+# Read-Write (always reaches the current primary)
+postgresql://postgres:<password>@dbha:5000/mydb?sslmode=require
 
-# Check which node is the leader
-curl http://localhost:8008/leader
-
-# Check replication lag
-docker compose exec postgres-1 psql -U postgres -c "SELECT * FROM pg_stat_replication;"
+# Read-Only (load-balanced across replicas)
+postgresql://postgres:<password>@dbha:5001/mydb?sslmode=require
 ```
 
-### Test Failover
+See [`examples/compose.consumer.yaml`](examples/compose.consumer.yaml) for a complete example.
 
-```bash
-# Stop the primary node to trigger failover
-docker compose stop postgres-1
+## Connecting from Other Projects
 
-# Watch Patroni elect a new leader (takes ~30 seconds)
-watch -n 1 'curl -s http://localhost:8009/cluster | jq'
-
-# Restart the old primary (it becomes a replica)
-docker compose start postgres-1
-```
-
-### Perform Backup
-
-```bash
-# Manual full backup
-docker compose exec pgbackrest pgbackrest --stanza=postgres-cluster backup --type=full
-
-# List available backups
-docker compose exec pgbackrest pgbackrest info
-
-# Restore from backup (requires cluster to be stopped)
-docker compose exec pgbackrest pgbackrest --stanza=postgres-cluster restore
-```
-
-### View Metrics
-
-```bash
-# Patroni metrics
-curl http://localhost:8008/metrics
-
-# Postgres metrics
-curl http://localhost:9187/metrics
-
-# etcd health
-docker compose exec etcd-1 etcdctl endpoint health
-```
-
-## Integration
-
-### Include in Parent Project
-
-Add this to your main `compose.yaml`:
+### Option A: Include locally (mono-repo)
 
 ```yaml
+# your-project/compose.yaml
 include:
   - path: ./stacks/postgres-ha/compose.yaml
 
@@ -230,190 +133,347 @@ services:
     networks:
       - postgres-ha
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/mydb?sslmode=require
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@dbha:5000/mydb?sslmode=require
 ```
 
-### Application Connection String
-
-For applications that need to connect:
-
-```
-# Primary (read-write)
-postgresql://postgres:postgres@postgres-1:5432/postgres?sslmode=require
-
-# Replicas (read-only) - use for load balancing reads
-postgresql://postgres:postgres@postgres-2:5433/postgres?sslmode=require
-postgresql://postgres:postgres@postgres-3:5434/postgres?sslmode=require
-```
-
-### HAProxy for Load Balancing (Optional)
-
-For production, consider adding HAProxy to load balance connections:
+### Option B: Include from Git (remote)
 
 ```yaml
-  haproxy:
-    image: haproxy:2.9-alpine
-    ports:
-      - "5000:5000"  # Read-write port
-      - "5001:5001"  # Read-only port
-    # Configuration to route writes to primary and reads to replicas
+include:
+  - https://github.com/tes4all/tes.git#main:stacks/postgres-ha/compose.yaml
+```
+
+### Option C: Deploy separately, reference network (recommended for Swarm)
+
+Deploy the golden stack once:
+```bash
+docker stack deploy -c stacks/postgres-ha/compose.yaml postgres-ha
+```
+
+Then in your application's compose:
+```yaml
+services:
+  my-app:
+    image: my-app:latest
+    networks:
+      - postgres-ha
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@dbha:5000/mydb?sslmode=require
+
+networks:
+  postgres-ha:
+    external: true
+```
+
+The network is named `postgres-ha` (no stack prefix) because the golden compose uses `name: postgres-ha`.
+
+## Security
+
+### Features
+
+- **No ports exposed to host** — database is accessible only through the Docker overlay network
+- **scram-sha-256** authentication (not md5)
+- **SSL/TLS enforced** for all connections
+- **Non-root containers** — all services run as unprivileged users
+- **Baked configurations** — all configs copied into images at build time (no bind-mounts)
+- **Version pinning** — no `:latest` tags
+- **Capability dropping** — `CAP_DROP: ALL` with minimal required caps added back
+- **no-new-privileges** — prevents privilege escalation
+- **read_only** rootfs where possible
+- **Structured logging** with size limits (`max-size: 10m`, `max-file: 3`)
+
+### Password Management
+
+**Local development:** Set passwords in `.env` file (loaded via Docker Compose variable substitution).
+
+**Production (Docker Swarm with Docker Secrets):**
+
+```bash
+# Create secrets
+echo "super_secure_pg_password" | docker secret create postgres_password -
+echo "super_secure_replicator"  | docker secret create replicator_password -
+echo "super_secure_admin"       | docker secret create admin_password -
+```
+
+The entrypoint automatically reads files from `/run/secrets/` and exports them as environment variables. Secret file names map to env vars:
+
+| Secret file | Env var |
+|-------------|---------|
+| `/run/secrets/postgres_password` | `POSTGRES_PASSWORD` |
+| `/run/secrets/replicator_password` | `REPLICATOR_PASSWORD` |
+| `/run/secrets/admin_password` | `ADMIN_PASSWORD` |
+
+To mount secrets in Swarm, create a thin overlay compose or use `docker service update`:
+```bash
+docker service update --secret-add postgres_password postgres-ha_postgres-1
+```
+
+### Default Credentials (Development Only!)
+
+| User | Password | Purpose |
+|------|----------|---------|
+| `postgres` | `postgres` | Superuser |
+| `admin` | `admin` | Admin (createrole, createdb) |
+| `replicator` | `replicator` | Streaming replication |
+
+> **Warning**: Change ALL passwords before any production deployment!
+
+## Monitoring & Observability
+
+### Prometheus Metrics Endpoints
+
+All services expose metrics on the internal network (not on the host). Your Prometheus instance must be on the `postgres-ha` network.
+
+| Service | Endpoint | Metrics |
+|---------|----------|---------|
+| HAProxy | `dbha:8405/metrics` | Connection counts, backend health, latency |
+| Patroni (per node) | `postgres-{1,2,3}:8008/metrics` | Cluster role, replication lag, timeline |
+| postgres_exporter | `postgres-exporter:9187/metrics` | Query stats, table sizes, locks, cache hit ratio |
+
+All services carry Prometheus auto-discover labels:
+```yaml
+labels:
+  - "prometheus.scrape=true"
+  - "prometheus.port=<port>"
+  - "prometheus.path=/metrics"
+```
+
+### Key Metrics for Grafana Dashboards
+
+| What to monitor | Metric / Query |
+|----------------|----------------|
+| Replication lag | `pg_stat_replication_replay_lag` |
+| Active connections | `pg_stat_activity_count` |
+| Cache hit ratio | `pg_stat_database_blks_hit / (blks_hit + blks_read)` |
+| Transaction rate | `rate(pg_stat_database_xact_commit[5m])` |
+| HAProxy backend health | `haproxy_server_status` |
+| HAProxy connection queue | `haproxy_backend_current_queue` |
+| Slow queries | `pg_stat_statements_mean_time_seconds` |
+| Disk usage | `pg_database_size_bytes` |
+
+### Grafana Setup
+
+Connect your Prometheus to any of the metrics endpoints above. Recommended community dashboards:
+
+- **PostgreSQL**: [Grafana Dashboard #9628](https://grafana.com/grafana/dashboards/9628) (postgres_exporter)
+- **HAProxy**: [Grafana Dashboard #2428](https://grafana.com/grafana/dashboards/2428) (HAProxy Prometheus)
+- **Patroni**: [Grafana Dashboard #18870](https://grafana.com/grafana/dashboards/18870)
+
+Example Prometheus scrape config:
+```yaml
+scrape_configs:
+  - job_name: 'postgres-ha-dbha'
+    dns_sd_configs:
+      - names: ['tasks.dbha']
+        type: A
+        port: 8405
+  - job_name: 'postgres-ha-exporter'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+  - job_name: 'postgres-ha-patroni'
+    static_configs:
+      - targets: ['postgres-1:8008', 'postgres-2:8008', 'postgres-3:8008']
+```
+
+### Health & Cluster Status
+
+```bash
+# Patroni cluster status (from inside a container on the network)
+docker compose exec postgres-1 curl -s http://localhost:8008/cluster | python3 -m json.tool
+
+# Which node is the leader?
+docker compose exec postgres-1 curl -s http://localhost:8008/cluster | \
+  python3 -c "import sys,json; m=json.load(sys.stdin)['members']; [print(x['name'],x['role']) for x in m]"
+
+# Replication lag
+docker compose exec postgres-1 psql -U postgres -c "SELECT * FROM pg_stat_replication;"
+```
+
+## High Availability
+
+- **Automatic failover**: Patroni detects primary failure and promotes a replica within ~30s
+- **Streaming replication**: Real-time data sync across all nodes
+- **Split-brain protection**: etcd consensus ensures only one primary at any time
+- **HAProxy health checks**: Routes traffic only to healthy nodes (checks Patroni API every 3s)
+- **2x HAProxy replicas**: HAProxy itself is HA — Docker Swarm load-balances between instances with `start-first` rolling updates
+- **Quorum-based**: 3-node etcd cluster tolerates 1 node failure
+
+### Test Failover
+
+```bash
+# Stop the current primary
+docker compose stop postgres-1
+
+# Watch Patroni elect a new leader (~30 seconds)
+docker compose exec postgres-2 curl -s http://localhost:8008/cluster | python3 -m json.tool
+
+# HAProxy automatically routes to the new primary — zero application changes needed
+
+# Restart the old primary (becomes a replica)
+docker compose start postgres-1
+```
+
+## Backups (pgBackRest)
+
+- **Automated incremental backups** every hour
+- **Point-in-time recovery (PITR)** with full WAL archiving
+- **LZ4 compression** for efficient storage
+- **Configurable retention**: 2 full + 4 differential backups (see `config/pgbackrest.conf`)
+
+```bash
+# Manual full backup
+docker compose exec pgbackrest pgbackrest --stanza=postgres-cluster backup --type=full
+
+# List backups
+docker compose exec pgbackrest pgbackrest info
+
+# Restore (requires cluster stop)
+docker compose exec pgbackrest pgbackrest --stanza=postgres-cluster restore
 ```
 
 ## Configuration
 
-### Environment Variables
+### File Structure
 
-Key environment variables (can be overridden):
+```
+stacks/postgres-ha/
+├── compose.yaml              # Golden Stack — DO NOT MODIFY per deployment
+├── .env.example              # Environment variable template
+├── Dockerfile.patroni        # PostgreSQL + Patroni image
+├── Dockerfile.pgbackrest     # Backup image
+├── Dockerfile.haproxy        # HAProxy LB image (baked config)
+├── entrypoint.sh             # Secrets + envsubst templating
+├── config/
+│   ├── patroni.yml           # Patroni config template (envsubst'd at runtime)
+│   ├── postgres.conf         # PostgreSQL tuning
+│   ├── pg_hba.conf           # Client authentication
+│   ├── pgbackrest.conf       # Backup configuration
+│   └── haproxy.cfg           # HAProxy load balancer config
+├── examples/
+│   └── compose.consumer.yaml # Example: how to connect from another project
+└── tests/
+    ├── verify.sh             # Comprehensive test suite
+    └── integration/
+        ├── run.sh            # Integration test runner
+        ├── compose.local.yaml   # Local include
+        └── compose.remote.yaml  # Remote Git include
+```
 
-- `PATRONI_SCOPE`: Cluster name (default: `postgres-cluster`)
-- `PATRONI_NAME`: Node name (auto-set per node)
-- `POSTGRES_PASSWORD`: Superuser password (⚠️ change in production)
+### Tuning PostgreSQL
 
-### Tuning
-
-Configuration files in `config/`:
-
-- `patroni.yml`: Patroni and cluster settings
-- `postgres.conf`: PostgreSQL server configuration
-- `pg_hba.conf`: Client authentication rules
-- `pgbackrest.conf`: Backup configuration
-
-To modify, edit the files and rebuild:
+Edit `config/postgres.conf` and rebuild:
 
 ```bash
 docker compose build
 docker compose up -d
 ```
 
+Key parameters:
+- `shared_buffers`: 25% of available RAM (default: 256MB)
+- `effective_cache_size`: 75% of available RAM (default: 1GB)
+- `work_mem`: Per-sort memory (default: 4MB)
+- `max_connections`: Max client connections (default: 100)
+
+### Network Configuration
+
+The network driver is configurable via `.env` — the compose.yaml is never modified:
+
+| Mode | `.env` setting | Use case |
+|------|---------------|----------|
+| Local | `NETWORK_DRIVER=bridge` | `docker compose up` development |
+| Swarm | `NETWORK_DRIVER=overlay` (default) | `docker stack deploy` production |
+
+The network is always named `postgres-ha` (with `name: postgres-ha` in compose) so consumers can reference it as `external: true` without worrying about stack name prefixes.
+
+## Testing
+
+### Quick Verification
+
+```bash
+./tests/verify.sh
+```
+
+Tests: etcd health, Patroni cluster, database read/write, HAProxy primary + replicas, replication, metrics endpoints, SSL, scram-sha-256, security hardening.
+
+### Integration Tests
+
+```bash
+# Local (includes compose.yaml with bridge network)
+./tests/integration/run.sh local
+
+# Remote (includes compose.yaml from GitHub)
+./tests/integration/run.sh remote
+```
+
 ## Production Checklist
 
-Before deploying to production:
-
-- [ ] **Change all default passwords** in `config/patroni.yml` and use Docker Secrets
-- [ ] **Replace self-signed SSL certificates** with proper CA-signed certs
-- [ ] **Configure Docker Secrets** for all sensitive data (passwords, connection strings)
-- [ ] **For Docker Swarm**: Change network driver to `overlay` in compose.yaml
-- [ ] **Set resource limits** appropriate for your workload
-- [ ] **Configure backup retention** policies in `pgbackrest.conf`
-- [ ] **Replace simple backup scheduler** with cron or proper job scheduler
-- [ ] **Enable monitoring** (Prometheus/Grafana)
-- [ ] **Test failover scenarios** thoroughly
-- [ ] **Document recovery procedures**
-- [ ] **Set up alerting** for cluster health
-- [ ] **Configure log aggregation**
-- [ ] **Review security groups** and network policies
+- [ ] Change all passwords in `.env` (or use Docker Secrets)
+- [ ] Replace self-signed SSL certificates with CA-signed certs
+- [ ] Set `NETWORK_DRIVER=overlay` (default)
+- [ ] Adjust `shared_buffers` / `effective_cache_size` for your server RAM
+- [ ] Configure backup retention in `config/pgbackrest.conf`
+- [ ] Set up Prometheus scraping for all metrics endpoints
+- [ ] Build Grafana dashboards for query performance, replication lag, connections
+- [ ] Set up alerting (replication lag > 1MB, primary down, HAProxy backend down)
+- [ ] Test failover scenarios thoroughly
+- [ ] Document recovery procedures
+- [ ] Configure log aggregation
+- [ ] Review firewall rules — ensure overlay network is not exposed
 
 ## Troubleshooting
 
-### Cluster won't initialize
+### Cluster Won't Initialize
 
 ```bash
-# Check etcd cluster health
+# Check etcd health
 docker compose exec etcd-1 etcdctl endpoint health --cluster
 
 # Check Patroni logs
 docker compose logs postgres-1
 
-# Reset and try again
+# Reset and retry
 docker compose down -v
 docker compose up -d
 ```
 
-### Replication lag
+### Replication Lag
 
 ```bash
-# Check replication status
 docker compose exec postgres-1 psql -U postgres -c \
   "SELECT client_addr, state, sync_state, replay_lag FROM pg_stat_replication;"
-
-# Check Patroni lag info
-curl http://localhost:8008/cluster | jq '.members[].lag'
 ```
 
-### Connection refused
+### Can't Connect from Another Service
+
+1. Verify the service is on the `postgres-ha` network
+2. Use `dbha:5000` (not direct postgres nodes)
+3. Use `sslmode=require` in connection string
+4. Check password matches `POSTGRES_PASSWORD` in `.env`
+
+### HAProxy Shows No Healthy Backends
 
 ```bash
-# Verify services are running
-docker compose ps
+# Check HAProxy stats
+docker compose exec postgres-1 curl -s http://dbha:8405/stats
 
-# Check which node is the primary
-curl http://localhost:8008/leader
-
-# Test connectivity
-docker compose exec postgres-1 pg_isready
+# Check Patroni health on each node
+for n in postgres-1 postgres-2 postgres-3; do
+  echo "$n: $(docker compose exec -T $n curl -s http://localhost:8008/health)"
+done
 ```
-
-### SSL errors
-
-Ensure your client supports SSL and uses `sslmode=require` or `sslmode=verify-full` in connection string.
-
-## Maintenance
-
-### Upgrade PostgreSQL Version
-
-1. Update version in `Dockerfile.patroni` (e.g., `postgres:16.2-alpine`)
-2. Rebuild images: `docker compose build`
-3. Rolling update:
-   ```bash
-   docker compose up -d postgres-3
-   # Wait for replica to catch up
-   docker compose up -d postgres-2
-   # Wait for replica to catch up
-   docker compose up -d postgres-1
-   ```
-
-### Scale Replicas
-
-Add more replica nodes in `compose.yaml` following the pattern of `postgres-2` and `postgres-3`.
-
-## Performance Tips
-
-- **Connection pooling**: Use PgBouncer for application connection pooling
-- **Read scaling**: Direct read-only queries to replica nodes
-- **Monitoring**: Set up alerts for replication lag and disk space
-- **Backups**: Schedule full backups during off-peak hours
-- **Tuning**: Adjust `shared_buffers`, `work_mem` based on workload
-
-## Security Considerations
-
-- Default passwords are for **development only**
-- SSL certificates are **self-signed for development**
-- In production:
-  - Use Docker Secrets for passwords
-  - Mount proper SSL certificates
-  - Enable firewall rules
-  - Use network policies
-  - Regular security updates
 
 ## Architecture Decisions
 
-### Why Patroni?
-
-- Industry-standard for Postgres HA
-- Handles automatic failover reliably
-- Integrates with major DCS systems (etcd, Consul, ZooKeeper)
-- Active community and good documentation
-
-### Why etcd?
-
-- Lightweight and reliable consensus
-- Better suited for containerized environments than ZooKeeper
-- Used by Kubernetes (proven at scale)
-
-### Why pgBackRest?
-
-- Enterprise features (incremental, differential backups)
-- Point-in-time recovery support
-- Better performance than pg_basebackup
-- Compression and encryption built-in
+| Decision | Rationale |
+|----------|-----------|
+| **Patroni** | Industry-standard PG HA, automatic failover, active community |
+| **etcd** | Lightweight consensus, proven at scale (Kubernetes uses it) |
+| **HAProxy** | L4 TCP load balancer, uses Patroni REST API for health checks |
+| **No host ports** | Security — DB accessible only within Docker network |
+| **envsubst templating** | Enables password injection without modifying baked configs |
+| **scram-sha-256** | Modern password auth, replaces deprecated md5 |
+| **Bridge/overlay via .env** | Golden stack works for both local dev and Swarm without changes |
 
 ## License
 
 This stack configuration is provided as-is for use in the TES project.
-
-## Support
-
-For issues or questions:
-- Check the [troubleshooting section](#troubleshooting)
-- Review Patroni logs: `docker compose logs postgres-1`
-- Verify etcd cluster: `docker compose exec etcd-1 etcdctl endpoint status --cluster`

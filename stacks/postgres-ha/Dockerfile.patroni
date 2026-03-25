@@ -14,15 +14,17 @@ RUN apk add --no-cache \
     musl-dev \
     linux-headers \
     openssl \
-    && pip3 install --no-cache-dir --break-system-packages patroni[etcd3]==3.2.0
+    gettext \
+    && pip3 install --no-cache-dir --break-system-packages patroni[etcd3]==3.2.0 \
+    && apk del --no-cache gcc python3-dev musl-dev linux-headers
 
 # Create directories and set permissions
-RUN mkdir -p /var/lib/postgresql/data /var/run/postgresql /var/log/postgresql /etc/postgresql/ssl && \
+RUN mkdir -p /var/lib/postgresql/data /var/run/postgresql /var/log/postgresql /etc/postgresql/ssl /tmp && \
     chmod 700 /var/lib/postgresql/data && \
-    chown -R postgres:postgres /var/lib/postgresql /var/run/postgresql /var/log/postgresql /etc/postgresql
+    chown -R postgres:postgres /var/lib/postgresql /var/run/postgresql /var/log/postgresql /etc/postgresql /tmp
 
-# Copy configuration files
-COPY config/patroni.yml /etc/patroni/patroni.yml
+# Copy configuration files (patroni.yml is a template — rendered at runtime via envsubst)
+COPY config/patroni.yml /etc/patroni/patroni.yml.tpl
 COPY config/postgres.conf /etc/postgresql/postgres.conf
 COPY config/pg_hba.conf /etc/postgresql/pg_hba.conf
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
@@ -51,6 +53,6 @@ HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
 # Expose ports
 EXPOSE 5432 8008
 
-# Start Patroni
+# Start Patroni (entrypoint renders patroni.yml template, then exec's CMD)
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["patroni", "/etc/patroni/patroni.yml"]
+CMD ["patroni", "/tmp/patroni.yml"]

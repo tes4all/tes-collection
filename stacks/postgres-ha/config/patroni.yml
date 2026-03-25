@@ -3,7 +3,7 @@ namespace: /postgres-ha/
 
 restapi:
   listen: 0.0.0.0:8008
-  connect_address: '{{ HOSTNAME }}:8008'
+  connect_address: '${HOSTNAME}:8008'
 
 etcd3:
   hosts: etcd-1:2379,etcd-2:2379,etcd-3:2379
@@ -30,6 +30,9 @@ bootstrap:
         ssl_cert_file: /etc/postgresql/ssl/server.crt
         ssl_key_file: /etc/postgresql/ssl/server.key
         ssl_ca_file: /etc/postgresql/ssl/ca.crt
+        password_encryption: scram-sha-256
+        shared_preload_libraries: 'pg_stat_statements'
+        pg_stat_statements.track: all
 
   initdb:
     - encoding: UTF8
@@ -37,34 +40,34 @@ bootstrap:
 
   pg_hba:
     - local   all             all                                     trust
-    - host    all             all             127.0.0.1/32            md5
-    - host    all             all             ::1/128                 md5
-    - hostssl replication     replicator      all                     md5
-    - hostssl all             all             all                     md5
+    - host    all             all             127.0.0.1/32            scram-sha-256
+    - host    all             all             ::1/128                 scram-sha-256
+    - hostssl replication     replicator      all                     scram-sha-256
+    - hostssl all             all             all                     scram-sha-256
 
   users:
     admin:
-      password: admin
+      password: ${ADMIN_PASSWORD}
       options:
         - createrole
         - createdb
     replicator:
-      password: replicator
+      password: ${REPLICATOR_PASSWORD}
       options:
         - replication
 
 postgresql:
   listen: 0.0.0.0:5432
-  connect_address: '{{ HOSTNAME }}:5432'
+  connect_address: '${HOSTNAME}:5432'
   data_dir: /var/lib/postgresql/data
   bin_dir: /usr/local/bin
   authentication:
     replication:
       username: replicator
-      password: replicator
+      password: ${REPLICATOR_PASSWORD}
     superuser:
       username: postgres
-      password: postgres
+      password: ${POSTGRES_PASSWORD}
   parameters:
     unix_socket_directories: '/var/run/postgresql'
 

@@ -1,9 +1,9 @@
 FROM postgres:18.1-alpine
 
 # Install pgbackrest and dependencies
+# Note: PG client tools are already available from the base image
 RUN apk add --no-cache \
     pgbackrest \
-    postgresql16-client \
     bash \
     ca-certificates
 

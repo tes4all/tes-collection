@@ -1,0 +1,14 @@
+FROM haproxy:3.0.7-alpine
+
+# Copy baked configuration into image (golden rule: never bind-mount config)
+COPY config/haproxy.cfg /usr/local/etc/haproxy/haproxy.cfg
+
+# Non-root user (haproxy image default)
+USER haproxy
+
+EXPOSE 5000 5001 8405
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+    CMD haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg || exit 1
+
+CMD ["haproxy", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]

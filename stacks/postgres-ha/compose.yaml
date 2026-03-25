@@ -1,6 +1,17 @@
+
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  Postgres HA Golden Stack                                                    ║
+# ║  PostgreSQL 18 · Patroni · etcd · HAProxy · pgBackRest                       ║
+# ║                                                                              ║
+# ║  Network driver is configurable via .env:                                    ║
+# ║    NETWORK_DRIVER=bridge   → local Docker Compose                            ║
+# ║    NETWORK_DRIVER=overlay  → Docker Swarm (default)                          ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
 networks:
   postgres-ha:
-    driver: bridge
+    name: postgres-ha
+    driver: ${NETWORK_DRIVER:-overlay}
     attachable: true
 
 volumes:
@@ -13,9 +24,13 @@ volumes:
   pgbackrest-data:
 
 services:
-  # etcd cluster for Patroni consensus
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # etcd Cluster (3 nodes) — Distributed consensus for Patroni
+  # ═══════════════════════════════════════════════════════════════════════════
   etcd-1:
     image: quay.io/coreos/etcd:v3.5.11
+    hostname: etcd-1
     networks:
       - postgres-ha
     environment:
@@ -31,6 +46,10 @@ services:
       - etcd-1-data:/etcd-data
     deploy:
       replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 30s
+        order: stop-first
       restart_policy:
         condition: on-failure
         delay: 5s
@@ -45,6 +64,11 @@ services:
       - CHOWN
       - SETUID
       - SETGID
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
     healthcheck:
       test: ["CMD", "etcdctl", "endpoint", "health"]
       interval: 10s
@@ -53,6 +77,7 @@ services:
 
   etcd-2:
     image: quay.io/coreos/etcd:v3.5.11
+    hostname: etcd-2
     networks:
       - postgres-ha
     environment:
@@ -68,6 +93,10 @@ services:
       - etcd-2-data:/etcd-data
     deploy:
       replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 30s
+        order: stop-first
       restart_policy:
         condition: on-failure
         delay: 5s
@@ -82,6 +111,11 @@ services:
       - CHOWN
       - SETUID
       - SETGID
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
     healthcheck:
       test: ["CMD", "etcdctl", "endpoint", "health"]
       interval: 10s
@@ -90,6 +124,7 @@ services:
 
   etcd-3:
     image: quay.io/coreos/etcd:v3.5.11
+    hostname: etcd-3
     networks:
       - postgres-ha
     environment:
@@ -105,6 +140,10 @@ services:
       - etcd-3-data:/etcd-data
     deploy:
       replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 30s
+        order: stop-first
       restart_policy:
         condition: on-failure
         delay: 5s
@@ -119,34 +158,46 @@ services:
       - CHOWN
       - SETUID
       - SETGID
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
     healthcheck:
       test: ["CMD", "etcdctl", "endpoint", "health"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # Patroni Postgres nodes
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Patroni PostgreSQL Nodes (3-node cluster)
+  # Passwords are injected via environment variables (see .env.example).
+  # For Docker Swarm, use Docker Secrets — the entrypoint reads from
+  # /run/secrets/ automatically.
+  # ═══════════════════════════════════════════════════════════════════════════
   postgres-1:
     build:
       context: .
       dockerfile: Dockerfile.patroni
-    image: postgres-ha/patroni:16.1
+    image: ${PATRONI_IMAGE:-postgres-ha/patroni:18.1}
     hostname: postgres-1
     networks:
       - postgres-ha
     environment:
       - PATRONI_NAME=postgres-1
       - PATRONI_SCOPE=postgres-cluster
-      - PATRONI_POSTGRESQL_CONNECT_ADDRESS=postgres-1:5432
-      - PATRONI_RESTAPI_CONNECT_ADDRESS=postgres-1:8008
       - HOSTNAME=postgres-1
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - REPLICATOR_PASSWORD=${REPLICATOR_PASSWORD:-replicator}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
     volumes:
       - postgres-1-data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-      - "8008:8008"
     deploy:
       replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 30s
+        order: stop-first
       restart_policy:
         condition: on-failure
         delay: 10s
@@ -166,32 +217,44 @@ services:
       - SETUID
       - SETGID
       - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
-      - etcd-1
-      - etcd-2
-      - etcd-3
+      etcd-1:
+        condition: service_healthy
+      etcd-2:
+        condition: service_healthy
+      etcd-3:
+        condition: service_healthy
 
   postgres-2:
     build:
       context: .
       dockerfile: Dockerfile.patroni
-    image: postgres-ha/patroni:16.1
+    image: ${PATRONI_IMAGE:-postgres-ha/patroni:18.1}
     hostname: postgres-2
     networks:
       - postgres-ha
     environment:
       - PATRONI_NAME=postgres-2
       - PATRONI_SCOPE=postgres-cluster
-      - PATRONI_POSTGRESQL_CONNECT_ADDRESS=postgres-2:5432
-      - PATRONI_RESTAPI_CONNECT_ADDRESS=postgres-2:8008
       - HOSTNAME=postgres-2
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - REPLICATOR_PASSWORD=${REPLICATOR_PASSWORD:-replicator}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
     volumes:
       - postgres-2-data:/var/lib/postgresql/data
-    ports:
-      - "5433:5432"
-      - "8009:8008"
     deploy:
       replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 30s
+        order: stop-first
       restart_policy:
         condition: on-failure
         delay: 10s
@@ -211,32 +274,44 @@ services:
       - SETUID
       - SETGID
       - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
-      - etcd-1
-      - etcd-2
-      - etcd-3
+      etcd-1:
+        condition: service_healthy
+      etcd-2:
+        condition: service_healthy
+      etcd-3:
+        condition: service_healthy
 
   postgres-3:
     build:
       context: .
       dockerfile: Dockerfile.patroni
-    image: postgres-ha/patroni:16.1
+    image: ${PATRONI_IMAGE:-postgres-ha/patroni:18.1}
     hostname: postgres-3
     networks:
       - postgres-ha
     environment:
       - PATRONI_NAME=postgres-3
       - PATRONI_SCOPE=postgres-cluster
-      - PATRONI_POSTGRESQL_CONNECT_ADDRESS=postgres-3:5432
-      - PATRONI_RESTAPI_CONNECT_ADDRESS=postgres-3:8008
       - HOSTNAME=postgres-3
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - REPLICATOR_PASSWORD=${REPLICATOR_PASSWORD:-replicator}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
     volumes:
       - postgres-3-data:/var/lib/postgresql/data
-    ports:
-      - "5434:5432"
-      - "8010:8008"
     deploy:
       replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 30s
+        order: stop-first
       restart_policy:
         condition: on-failure
         delay: 10s
@@ -256,20 +331,78 @@ services:
       - SETUID
       - SETGID
       - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
-      - etcd-1
-      - etcd-2
-      - etcd-3
+      etcd-1:
+        condition: service_healthy
+      etcd-2:
+        condition: service_healthy
+      etcd-3:
+        condition: service_healthy
 
-  # Postgres Exporter for metrics
+  # ═══════════════════════════════════════════════════════════════════════════
+  # HAProxy — Connection Load Balancer
+  #   Port 5000 → Primary (read-write)
+  #   Port 5001 → Replicas (read-only, round-robin)
+  #   Port 8405 → Prometheus metrics + stats UI
+  #
+  # Other services in the swarm connect to:
+  #   dbha:5000  (write)   or   dbha:5001  (read)
+  # ═══════════════════════════════════════════════════════════════════════════
+  dbha:
+    build:
+      context: .
+      dockerfile: Dockerfile.haproxy
+    image: ${HAPROXY_IMAGE:-postgres-ha/haproxy:3.0.7}
+    networks:
+      - postgres-ha
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+      labels:
+        - "prometheus.scrape=true"
+        - "prometheus.port=8405"
+        - "prometheus.path=/metrics"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      - postgres-1
+      - postgres-2
+      - postgres-3
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Postgres Exporter — Prometheus metrics for PostgreSQL
+  # Connects through HAProxy to always reach the current primary.
+  # ═══════════════════════════════════════════════════════════════════════════
   postgres-exporter:
-    image: prometheuscommunity/postgres-exporter:v0.15.0
+    image: prometheuscommunity/postgres-exporter:v0.16.0
     networks:
       - postgres-ha
     environment:
-      - DATA_SOURCE_NAME=postgresql://postgres:postgres@postgres-1:5432/postgres?sslmode=require
-    ports:
-      - "9187:9187"
+      - DATA_SOURCE_NAME=postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@dbha:5000/postgres?sslmode=require
     deploy:
       replicas: 1
       restart_policy:
@@ -280,15 +413,31 @@ services:
         - "prometheus.path=/metrics"
     cap_drop:
       - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9187/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
-      - postgres-1
+      - dbha
 
-  # pgBackRest for backups
+  # ═══════════════════════════════════════════════════════════════════════════
+  # pgBackRest — Automated Backups
+  # ═══════════════════════════════════════════════════════════════════════════
   pgbackrest:
     build:
       context: .
       dockerfile: Dockerfile.pgbackrest
-    image: postgres-ha/pgbackrest:latest
+    image: ${PGBACKREST_IMAGE:-postgres-ha/pgbackrest:18.1}
     networks:
       - postgres-ha
     volumes:
@@ -303,5 +452,12 @@ services:
       - ALL
     cap_add:
       - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       - postgres-1

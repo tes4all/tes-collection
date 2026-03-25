@@ -35,7 +35,8 @@ services:
   # Valkey - State Store (Redis Protocol)
   # ===========================================
   valkey:
-    image: valkey/valkey:9.0.3-alpine
+    image: valkey/valkey:9.1-alpine
+
 
 
     command: valkey-server --appendonly yes --requirepass ${VALKEY_PASSWORD:-insecure_default}
@@ -128,7 +129,8 @@ services:
   # Traefik - L7 HTTP Reverse Proxy
   # ===========================================
   traefik:
-    image: tes4all/traefik:${TRAEFIK_VERSION:-3.6.8}
+    image: tes4all/traefik:${TRAEFIK_VERSION:-3.6.9}
+
     hostname: traefik-{{.Task.Slot}}
     command:
       # API & Dashboard

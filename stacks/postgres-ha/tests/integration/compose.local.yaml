@@ -1,2 +1,4 @@
+# Local integration test — includes the golden stack with bridge networking
 include:
-  - ../../compose.yaml
+  - path: ../../compose.yaml
+    env_file: ../../.env
