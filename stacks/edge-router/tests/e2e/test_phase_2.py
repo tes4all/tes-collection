@@ -12,6 +12,13 @@ def docker_stack():
         "stacks/edge-router/tests/e2e/compose.test.yaml"
     ])
 
+    # Ensure edge-external network exists
+    try:
+        docker.network.inspect("edge-external")
+    except Exception:
+        print("Creating edge-external network...")
+        docker.network.create("edge-external")
+
     print("Building images...")
     # Ensure images are built.
     # Note: 'docker build' command acts on the compose project services if using 'docker compose build'

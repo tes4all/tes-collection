@@ -24,6 +24,14 @@ def docker_stack():
         "stacks/edge-router/compose.yaml",
         "stacks/edge-router/tests/e2e/compose.test.yaml"
     ])
+
+    # Ensure edge-external network exists
+    try:
+        docker.network.inspect("edge-external")
+    except Exception:
+        print("Creating edge-external network...")
+        docker.network.create("edge-external")
+
     # Build the image first
     print("Building Edge Router API image...")
     docker.build(
