@@ -41,15 +41,15 @@ Refer to each stack's README for a complete list of available configuration opti
 
 ```bash
 # Authentik
-AUTHENTIK_SECRET_KEY=your-secure-secret-key
-POSTGRES_PASSWORD=secure-db-password
+AUTHENTIK_SECRET_KEY=<authentik_secret_key_placeholder>
+POSTGRES_PASSWORD=<postgres_password_placeholder>
 
 # Vaultwarden
 DOMAIN=https://vault.example.com
 SIGNUPS_ALLOWED=false
 
 # Zitadel
-ZITADEL_MASTERKEY=MasterkeyNeedsToBe32BytesLong123
+ZITADEL_MASTERKEY=<zitadel_masterkey_placeholder_32_bytes_min>
 ```
 
 ## Testing

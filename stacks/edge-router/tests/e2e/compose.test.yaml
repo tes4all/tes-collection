@@ -13,7 +13,7 @@ services:
     environment:
       # Use a real provider name to trigger fast failure instead of interactive manual mode
       - LEGO_DNS_PROVIDER=infomaniak
-      - INFOMANIAK_TOKEN=dummy
+      - INFOMANIAK_TOKEN=<dns_provider_token_placeholder>
 
   socket-proxy:
     build:
