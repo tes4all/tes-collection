@@ -1,6 +1,9 @@
 # Local .terraform directories
 **/.terraform/*
 
+# Terraform lock files (consumers regenerate these)
+.terraform.lock.hcl
+
 # .tfstate files
 *.tfstate
 *.tfstate.*
