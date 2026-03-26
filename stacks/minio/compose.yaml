@@ -1,0 +1,91 @@
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-03-30T09-41-56Z
+    # Security: Run as non-root user
+    user: "1000"
+    command: server /data{1...4} --console-address ":9001"
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      labels:
+        # --- Router: API and Web Console Exposed securely via Traefik ---
+        - "traefik.enable=true"
+        - "traefik.swarm.network=${TRAEFIK_NETWORK:-edge-external}"
+        - "traefik.http.routers.minio-api.rule=Host(`s3.${MINIO_HOSTNAME}`)"
+        - "traefik.http.routers.minio-api.entrypoints=websecure"
+        - "traefik.http.routers.minio-api.tls=true"
+        - "traefik.http.services.minio-api.loadbalancer.server.port=9000"
+        - "traefik.http.routers.minio-console.rule=Host(`console.s3.${MINIO_HOSTNAME}`)"
+        - "traefik.http.routers.minio-console.entrypoints=websecure"
+        - "traefik.http.routers.minio-console.tls=true"
+        - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
+    environment:
+      # Security: Do not hardcode credentials, use Docker secrets
+      - MINIO_ROOT_USER_FILE=/run/secrets/minio_root_user
+      - MINIO_ROOT_PASSWORD_FILE=/run/secrets/minio_root_password
+      - MINIO_SERVER_URL=https://s3.${MINIO_HOSTNAME}
+      - MINIO_BROWSER_REDIRECT_URL=https://console.s3.${MINIO_HOSTNAME}
+    volumes:
+      # Distributed/Erasure coding minimum required drives
+      - minio-data1:/data1
+      - minio-data2:/data2
+      - minio-data3:/data3
+      - minio-data4:/data4
+    networks:
+      - ${TRAEFIK_NETWORK:-edge-external}
+      - minio-backend
+    secrets:
+      - minio_root_user
+      - minio_root_password
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Security: Hardening properties
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=100m
+    cap_drop:
+      - ALL
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2024-03-30T10-06-24Z
+    user: "1000"
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      /usr/bin/mc alias set myminio http://minio:9000 $$(cat /run/secrets/minio_root_user) $$(cat /run/secrets/minio_root_password) &&
+      /usr/bin/mc mb myminio/default-bucket --ignore-existing &&
+      /usr/bin/mc anonymous set public myminio/default-bucket
+      "
+    networks:
+      - minio-backend
+    secrets:
+      - minio_root_user
+      - minio_root_password
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+networks:
+  edge-external:
+    external: true
+    name: ${TRAEFIK_NETWORK:-edge-external}
+  minio-backend:
+    driver: overlay
+    attachable: false
+
+volumes:
+  minio-data1:
+  minio-data2:
+  minio-data3:
+  minio-data4:
+
+secrets:
+  minio_root_user:
+    external: true
+  minio_root_password:
+    external: true
