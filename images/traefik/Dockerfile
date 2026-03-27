@@ -1,6 +1,6 @@
 # Traefik - L7 Reverse Proxy
 # Golden Stack - Non-Root, Baked Config
-FROM traefik:3.6.11
+FROM traefik:v3.6.12
 
 # Create non-root user and directories
 USER root
